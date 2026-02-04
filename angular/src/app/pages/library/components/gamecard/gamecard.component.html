@@ -1,7 +1,7 @@
 <div class="card card-side bg-base-100 shadow-sm">
   <figure>
     @if(coverArt) {<img
-      [src]="'data:image/png;base64,' + coverArt?.base64"
+      [src]="'data:image/png;base64,' + coverArt.base64"
       alt="cover-art"
     />} @else{
     <div
@@ -12,12 +12,12 @@
     }
   </figure>
   <div class="card-body gap-0 pb-0">
-    @if(game && game?.title){
+    @if(game && game.title){
     <h2 class="card-title">
       {{
-        game?.title && (game?.title?.length ?? 0) > 25
-          ? (game?.title | slice : 0 : 25) + "..."
-          : game?.title
+        game.title && game.title.length > 25
+          ? (game.title | slice : 0 : 25) + "..."
+          : game.title
       }}
     </h2>
     }
@@ -41,14 +41,19 @@
           class="dropdown-content menu bg-base-100 rounded-box z-1 w-52 p-2 shadow-sm"
         >
           <li>
-            <a class="text-gray-300"
+            <a
+              (click)="
+                game &&
+                confirmDelete(game.filename) &&
+                this._libraryService.deleteGame(game)
+              "
               ><i-lucide name="trash" [size]="16"></i-lucide>Delete</a
             >
           </li>
           <li>
             <a
               (click)="
-                game && this._libraryService.downloadArtByGameId(game.gameId)
+                game && this._libraryService.downloadArtByGameId(game)
               "
               ><i-lucide name="download" [size]="16"></i-lucide>Fetch Artwork</a
             >

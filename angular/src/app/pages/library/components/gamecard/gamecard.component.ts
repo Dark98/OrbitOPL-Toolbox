@@ -17,6 +17,11 @@ export class GamecardComponent {
   constructor(public readonly _libraryService: LibraryService) {}
 
   public coverArt: gameArt | undefined;
+
+  confirmDelete(filename?: string) {
+    const name = filename || "this game";
+    return window.confirm(`Delete ${name} and related files?`);
+  }
   ngOnInit() {
     if (this.game && Array.isArray(this.game.art)) {
       this.coverArt = this.game.art.find((a) => a.type === 'COV');
