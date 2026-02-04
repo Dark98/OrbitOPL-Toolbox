@@ -1,0 +1,124 @@
+name: nightly
+
+on:
+  schedule:
+    - cron: "0 3 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: nightly
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ${{ matrix.os }}
+    env:
+      CSC_IDENTITY_AUTO_DISCOVERY: "false"
+      NODE_OPTIONS: "--max-old-space-size=4096"
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            package_cmd: package:win
+          - os: macos-latest
+            package_cmd: package:mac
+          - os: ubuntu-latest
+            package_cmd: package:linux
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+
+      - name: Install root deps
+        run: npm ci
+
+      - name: Install angular deps
+        run: npm ci
+        working-directory: angular
+
+      - name: Build and package
+        run: npm run ${{ matrix.package_cmd }}
+        env:
+          CI: "false"
+
+      - name: Rename artifacts (Windows)
+        if: matrix.os == 'windows-latest'
+        shell: pwsh
+        run: |
+          $suffix = "windows"
+          Get-ChildItem -Path build -File -Include *.exe,*.zip,*.yml,*.blockmap,*.msi | ForEach-Object {
+            $name = $_.BaseName
+            $ext = $_.Extension
+            if ($name -notmatch "-$suffix$") {
+              Rename-Item $_.FullName -NewName "$name-$suffix$ext"
+            }
+          }
+
+      - name: Rename artifacts (macOS/Linux)
+        if: matrix.os != 'windows-latest'
+        shell: bash
+        run: |
+          if [ "${{ matrix.os }}" = "macos-latest" ]; then
+            suffix="macos"
+          else
+            suffix="linux"
+          fi
+          for f in build/*.dmg build/*.zip build/*.AppImage build/*.deb build/*.yml build/*.blockmap; do
+            [ -f "$f" ] || continue
+            base="$(basename "$f")"
+            name="${base%.*}"
+            ext=".${base##*.}"
+            if [[ "$name" != *-"$suffix" ]]; then
+              mv "$f" "build/${name}-${suffix}${ext}"
+            fi
+          done
+
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: nightly-${{ matrix.os }}
+          path: |
+            build/*.exe
+            build/*.zip
+            build/*.dmg
+            build/*.AppImage
+            build/*.deb
+            build/*.yml
+            build/*.blockmap
+            build/*.msi
+
+  publish:
+    runs-on: ubuntu-latest
+    needs: build
+    steps:
+      - name: Download all build artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: dist-artifacts
+
+      - name: Upload nightly prerelease
+        uses: ncipollo/release-action@v1
+        with:
+          tag: nightly
+          name: Nightly
+          prerelease: true
+          allowUpdates: true
+          replacesArtifacts: true
+          artifacts: |
+            dist-artifacts/**/*.exe
+            dist-artifacts/**/*.zip
+            dist-artifacts/**/*.dmg
+            dist-artifacts/**/*.AppImage
+            dist-artifacts/**/*.deb
+            dist-artifacts/**/*.yml
+            dist-artifacts/**/*.blockmap
+            dist-artifacts/**/*.msi
