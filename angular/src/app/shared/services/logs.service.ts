@@ -17,6 +17,16 @@ export class LogsService {
   constructor() {
     const stored = localStorage.getItem('verboseMode');
     this.verboseMode = stored === 'true';
+
+    if (window?.libraryAPI?.onMainLog) {
+      window.libraryAPI.onMainLog((entry: any) => {
+        if (!entry) return;
+        const type = entry.type === 'ERR' || entry.type === 'VRB' ? entry.type : 'INF';
+        const location = entry.location || 'main';
+        const message = entry.message || String(entry);
+        this.addLog(location, message, type);
+      });
+    }
   }
 
   get isVerboseMode(): boolean {

@@ -13,14 +13,13 @@
       <div>
         <input
           type="radio"
-          disabled="true"
           name="radio-gametype"
           class="radio radio-primary"
           (value)="(isGameCd)"
           [disabled]="_libraryService.loading$ | async"
-          (change)="isGameCd = true; isGameDvd = false"
+          (change)="isGameCd = true; isGameDvd = false; resetImportState()"
         />
-        <span class="pl-2 pr-8">.bin/.cue</span>
+        <span class="pl-2 pr-8">PS1 / POPS (.cue)</span>
         <input
           type="radio"
           name="radio-gametype"
@@ -28,14 +27,14 @@
           checked="true"
           [disabled]="_libraryService.loading$ | async"
           (value)="(isGameDvd)"
-          (change)="isGameCd = false; isGameDvd = true"
-        /><span class="pl-2 pr-8">.iso</span>
+          (change)="isGameCd = false; isGameDvd = true; resetImportState()"
+        /><span class="pl-2 pr-8">PS2 (.iso/.zso)</span>
       </div>
     </div>
     <div>
       <span class="pr-4 text-sm font-semibold flex flex-col justify-center"
         >Select the gamefile to import ({{
-          isGameCd ? "point to the .cue file" : ".iso"
+          isGameCd ? "point to the .cue file" : ".iso/.zso"
         }}):</span
       >
       <button
@@ -45,6 +44,24 @@
       >
         Select Gamefile
       </button>
+      @if(isGameCd) {
+      <div class="text-xs text-gray-500 pt-2">
+        PS1/POPS imports use the bundled cue2pops converter when available.
+        If it's missing, set <span class="font-mono">POPS_CONVERTER_CMD</span>
+        with <span class="font-mono">{{ '{' }}cue{{ '}' }}</span> and
+        <span class="font-mono">{{ '{' }}vcd{{ '}' }}</span> placeholders.
+      </div>
+      @if(bundledCue2PopsChecked && !bundledCue2PopsAvailable) {
+      <div
+        class="mt-2 text-xs text-yellow-800 bg-yellow-100 border border-yellow-300 rounded p-2"
+      >
+        Bundled cue2pops converter not found. Set
+        <span class="font-mono">POPS_CONVERTER_CMD</span> or place
+        <span class="font-mono">cue2pops.exe</span> in
+        <span class="font-mono">assets/tools/cue2pops/windows-x64</span>.
+      </div>
+      }
+      }
     </div>
     <div class="pt-8 flex">
       <fieldset class="fieldset mr-4 w-50">
@@ -52,7 +69,7 @@
         <input
           type="text"
           class="input"
-          [disabled]="autoDiscoveredFile"
+          [disabled]="autoDiscoveredId"
           [value]="gameId"
         />
       </fieldset>
@@ -61,7 +78,7 @@
         <input
           type="text"
           class="input"
-          [disabled]="autoDiscoveredFile"
+          [disabled]="autoDiscoveredName"
           [value]="gameName"
         />
       </fieldset>
@@ -70,11 +87,23 @@
         <input
           type="checkbox"
           [disabled]="_libraryService.loading$ | async"
-          checked="checked"
+          [checked]="downloadArtwork"
+          (change)="downloadArtwork = $any($event.target).checked"
           class="toggle"
-          [value]="downloadArtwork"
         />
       </fieldset>
+      @if(isGameCd) {
+      <fieldset class="fieldset ml-4 flex-1">
+        <legend class="fieldset-legend">Update conf_apps.cfg</legend>
+        <input
+          type="checkbox"
+          [disabled]="_libraryService.loading$ | async"
+          [checked]="updateConfApps"
+          (change)="updateConfApps = $any($event.target).checked"
+          class="toggle"
+        />
+      </fieldset>
+      }
     </div>
     <div
       *ngIf="invalidFileDiscovered"

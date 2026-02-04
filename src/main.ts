@@ -4,13 +4,19 @@ import electronReloader from "electron-reloader";
 import PackageInfo from "../package.json";
 import {
   convertBinToIso,
+  convertCueToVcd,
   downloadArtByGameId,
+  addToConfApps,
+  deleteGameAndRelatedFiles,
+  ensurePopsElfForVcd,
   getArtFolder,
   getGamesFiles,
+  isBundledCue2PopsAvailable,
   moveFile,
   openAskDirectory,
   openAskGameFile,
   renameGamefile,
+  setMainLogEmitter,
   tryDetermineGameIdFromHex,
 } from "./library.service";
 
@@ -28,6 +34,10 @@ function createWindow() {
       preload: path.join(__dirname, "preload.js"),
       contextIsolation: true,
     },
+  });
+
+  setMainLogEmitter((entry) => {
+    win.webContents.send("main-log", entry);
   });
 
   win.removeMenu();
@@ -113,8 +123,8 @@ ipcMain.handle(
 
 ipcMain.handle(
   "download-art-by-gameid",
-  async (event, dirPath: string, gameId: string) => {
-    return downloadArtByGameId(dirPath, gameId);
+  async (event, dirPath: string, gameId: string, system?: "PS2" | "PS1") => {
+    return downloadArtByGameId(dirPath, gameId, system ?? "PS2");
   }
 );
 
@@ -134,11 +144,49 @@ ipcMain.handle(
 );
 
 ipcMain.handle(
+  "convert-cue-to-vcd",
+  async (event, cueFilePath: string, outputVcdPath: string) => {
+    return convertCueToVcd(
+      cueFilePath,
+      outputVcdPath,
+      (progress) => {
+        event.sender.send("convert-vcd-progress", progress);
+      },
+      (stage) => {
+        event.sender.send("convert-vcd-stage", stage);
+      }
+    );
+  }
+);
+
+ipcMain.handle(
   "open-ask-game-file",
   async (event, isGameCd: boolean, isGameDvd: boolean) => {
     return openAskGameFile(isGameCd, isGameDvd);
   }
 );
+
+ipcMain.handle("is-bundled-cue2pops-available", async () => {
+  return { success: true, available: await isBundledCue2PopsAvailable() };
+});
+
+ipcMain.handle(
+  "ensure-pops-elf-for-vcd",
+  async (event, vcdPath: string, oplRoot: string) => {
+    return ensurePopsElfForVcd(vcdPath, oplRoot);
+  }
+);
+
+ipcMain.handle(
+  "add-to-conf-apps",
+  async (event, oplRoot: string, gameName: string, elfName: string) => {
+    return addToConfApps(oplRoot, gameName, elfName);
+  }
+);
+
+ipcMain.handle("delete-game-and-related-files", async (event, payload) => {
+  return deleteGameAndRelatedFiles(payload);
+});
 
 ipcMain.handle(
   "move-file",

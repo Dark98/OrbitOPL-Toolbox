@@ -207,6 +207,10 @@ export class LibraryService {
     );
   }
 
+  private sanitizeFilename(value: string) {
+    return value.replace(/[<>:"/\\|?*\u0000-\u001F]/g, '').trim();
+  }
+
   private mapGameIdToRegion(gameId: string) {
     if (
       gameId.startsWith('SCES') ||
@@ -248,14 +252,19 @@ export class LibraryService {
     const invalidFiles: any[] = [];
 
     for (const file of gamefiles) {
+      const extension = file.extension?.toLowerCase();
+      const isDisc =
+        extension === '.iso' || extension === '.zso' || extension === '.vcd';
       const gameIdMatch = file.name.match(/^([A-Z]{4}_\d{3}\.\d{2})\.(.+)$/);
+      const psxMatch = file.name.match(/^([A-Z]{4}_\d{3}\.\d{2})(?:\.(.+))?$/);
+      const isVcd = extension === '.vcd';
+
       if (
-        (file.extension === '.iso' || file.extension === '.zso') &&
+        isDisc &&
         typeof file.name === 'string' &&
         typeof file.path === 'string' &&
         file.stats &&
-        typeof file.stats.size === 'number' &&
-        gameIdMatch
+        typeof file.stats.size === 'number'
       ) {
         this.setLoading(true);
         this.setCurrentAction(file.name);
@@ -264,17 +273,45 @@ export class LibraryService {
           'libraryService.parseGameFilesToLibrary',
           `Mapping: ${file.name}`
         );
-        const gameId = gameIdMatch[1];
-        const title = gameIdMatch[2];
+        const match = gameIdMatch || psxMatch;
+        const gameId = match ? match[1] : file.name;
+        const title = match?.[2] || '';
+
+        if (isVcd && (!match || !match[1])) {
+          try {
+            const res = await this.tryDetermineGameIdFromHex(file.path);
+            if (res?.success && res?.gameId) {
+              this._logger.verbose(
+                'libraryService.parseGameFilesToLibrary',
+                `Detected PSX GameID from VCD: ${res.gameId}`
+              );
+              this.setCurrentAction(file.name);
+              validGames.push({
+                filename: file.name + file.extension,
+                title: title || res.gameName || undefined,
+                cdType: file.parentPath?.split(/[\\/]/).pop() || '',
+                gameId: res.gameId,
+                region: this.mapGameIdToRegion(res.gameId),
+                path: file.path,
+                extension: extension || file.extension,
+                parentPath: file.parentPath,
+                size: this.formatFileSize(file.stats.size) || '??',
+              });
+              continue;
+            }
+          } catch (err) {
+            // Fall through to default handling.
+          }
+        }
 
         validGames.push({
           filename: file.name + file.extension,
-          title: title,
+          title: title || undefined,
           cdType: file.parentPath?.split(/[\\/]/).pop() || '',
           gameId: gameId,
           region: this.mapGameIdToRegion(gameId),
           path: file.path,
-          extension: file.extension,
+          extension: extension || file.extension,
           parentPath: file.parentPath,
           size: this.formatFileSize(file.stats.size) || '??',
         });
@@ -336,7 +373,17 @@ export class LibraryService {
       });
   }
 
-  public downloadArtByGameId(gameId: string) {
+  public downloadArtByGameId(
+    gameOrId: Game | string,
+    systemOverride?: 'PS1' | 'PS2'
+  ) {
+    const gameId = typeof gameOrId === 'string' ? gameOrId : gameOrId.gameId;
+    const isPsxGame =
+      typeof gameOrId !== 'string' &&
+      (gameOrId.cdType?.toUpperCase() === 'POPS' ||
+        gameOrId.extension?.toLowerCase() === '.vcd');
+    const system =
+      systemOverride || (isPsxGame ? 'PS1' : 'PS2');
     this._logger.log(
       'downloadArtByGameId',
       'Triggered download of art for ' + gameId
@@ -344,7 +391,7 @@ export class LibraryService {
     this.setLoading(true);
     this.setCurrentAction('Downloading Art for ' + gameId + '...');
     return window.libraryAPI
-      .downloadArtByGameId(`${this.currentDirectory}/ART`, gameId)
+      .downloadArtByGameId(`${this.currentDirectory}/ART`, gameId, system)
       .then((res) => {
         this.setCurrentAction('');
         this.setLoading(false);
@@ -359,7 +406,7 @@ export class LibraryService {
     );
     const games = this.librarySubject.getValue();
     const downloadPromises = games.map((game) =>
-      this.downloadArtByGameId(game.gameId)
+      this.downloadArtByGameId(game)
     );
     return Promise.all(downloadPromises);
   }
@@ -459,6 +506,61 @@ export class LibraryService {
       });
   }
 
+  public async deleteGame(game: Game) {
+    const dirPath = this.currentDirectory;
+    if (!dirPath) {
+      this._logger.error('deleteGame', 'No directory selected.');
+      return;
+    }
+
+    this._logger.log('deleteGame', `Deleting game: ${game.filename}`);
+    this.setLoading(true);
+    this.setCurrentAction(`Deleting ${game.filename}...`);
+
+    try {
+      const payload = {
+        oplRoot: dirPath,
+        gameId: game.gameId,
+        path: game.path,
+        filename: game.filename,
+        extension: game.extension,
+        parentPath: game.parentPath,
+      };
+      const result: any = await window.libraryAPI.deleteGameAndRelatedFiles(
+        payload
+      );
+      if (!result?.success) {
+        this._logger.error(
+          'deleteGame',
+          result?.errors?.[0]?.message || 'Failed to delete game.'
+        );
+      }
+    } catch (err: any) {
+      this._logger.error('deleteGame', err?.message || String(err));
+    } finally {
+      this.setCurrentAction('');
+      this.setLoading(false);
+      this.refreshGamesFiles();
+    }
+  }
+
+  convertCueToVcd(cueFilePath: string, outputVcdPath: string) {
+    this._logger.log(
+      'convertCueToVcd',
+      `Triggered conversion of BIN/CUE to VCD: ${cueFilePath} -> ${outputVcdPath}`
+    );
+    this.setLoading(true);
+    this.setCurrentAction('Converting BIN/CUE to VCD...');
+
+    return window.libraryAPI
+      .convertCueToVcd(cueFilePath, outputVcdPath)
+      .then((res) => {
+        this.setCurrentAction('');
+        this.setLoading(false);
+        return res;
+      });
+  }
+
   moveFile(sourcePath: string, destPath: string) {
     this._logger.log(
       'moveFile',
@@ -495,7 +597,9 @@ export class LibraryService {
     gamePath: string,
     gameId: string,
     gameName: string,
-    downloadArtwork: boolean
+    downloadArtwork: boolean,
+    isPsx: boolean,
+    updateConfApps: boolean
   ) {
     this._logger.log(
       'importGameFile',
@@ -516,7 +620,7 @@ export class LibraryService {
       return;
     }
 
-    const destinationDir = `${dirPath}/DVD`;
+    const destinationDir = isPsx ? `${dirPath}/POPS` : `${dirPath}/DVD`;
     const normaliseErrorMessage = (value: any, fallback: string) => {
       if (!value) return fallback;
       if (typeof value === 'string') return value;
@@ -529,6 +633,97 @@ export class LibraryService {
     };
 
     try {
+      if (isPsx) {
+        if (!gamePath.toLowerCase().endsWith('.cue')) {
+          throw new Error(
+            'PS1/POPS imports require a .cue file (paired with .bin).'
+          );
+        }
+        const safeName = this.sanitizeFilename(gameName || 'PSX Game');
+        const outputFileName = `${gameId}.${safeName}.VCD`;
+        const outputVcdPath = `${destinationDir}/${outputFileName}`;
+
+        this._logger.verbose(
+          'importGameFile',
+          `Converting BIN/CUE to VCD: ${gamePath} -> ${outputVcdPath}`
+        );
+        this.setCurrentAction(`Importing...`);
+        let stageLabel = 'Importing...';
+
+        window.libraryAPI.onConvertVcdProgress((progress: any) => {
+          if (!progress) return;
+          const percent = progress.percent ?? 0;
+          const written = progress.writtenMB ?? 0;
+          const total = progress.totalMB ?? 0;
+          this.setCurrentAction(
+            `${stageLabel} ${percent}% (${written}/${total} MB)`
+          );
+        });
+
+        window.libraryAPI.onConvertVcdStage((stage: string) => {
+          if (!stage) return;
+          stageLabel = stage;
+          this.setCurrentAction(stageLabel);
+        });
+
+        const convertResult: any = await this.convertCueToVcd(
+          gamePath,
+          outputVcdPath
+        );
+
+        window.libraryAPI.removeAllConvertVcdProgressListeners();
+        window.libraryAPI.removeAllConvertVcdStageListeners();
+
+        if (!convertResult?.success) {
+          throw new Error(
+            normaliseErrorMessage(
+              convertResult?.message,
+              'Failed to convert BIN/CUE to VCD.'
+            )
+          );
+        }
+
+        const finalPath = convertResult.newPath || outputVcdPath;
+
+        this._logger.log(
+          'importGameFile',
+          `PSX game imported successfully: ${finalPath}`
+        );
+        const elfResult: any = await window.libraryAPI.ensurePopsElfForVcd(
+          finalPath,
+          dirPath
+        );
+        if (!elfResult?.success) {
+          this._logger.error(
+            'importGameFile',
+            elfResult?.message || 'Failed to create POPS ELF.'
+          );
+        } else if (updateConfApps && elfResult?.elfName) {
+          const confResult: any = await window.libraryAPI.addToConfApps(
+            dirPath,
+            gameName || gameId,
+            elfResult.elfName
+          );
+          if (!confResult?.success) {
+            this._logger.error(
+              'importGameFile',
+              confResult?.message || 'Failed to update conf_apps.cfg.'
+            );
+          }
+        }
+        this.refreshGamesFiles();
+
+        if (downloadArtwork) {
+          this._logger.verbose(
+            'importGameFile',
+            `Downloading artwork for: ${gameId}`
+          );
+          this.downloadArtByGameId(gameId, 'PS1');
+        }
+
+        return;
+      }
+
       this._logger.verbose(
         'importGameFile',
         `Moving file to: ${destinationDir}`
@@ -595,7 +790,7 @@ export class LibraryService {
           'importGameFile',
           `Downloading artwork for: ${gameId}`
         );
-        this.downloadArtByGameId(gameId);
+        this.downloadArtByGameId(gameId, 'PS2');
       }
     } catch (error: any) {
       this._logger.error('importGameFile', `Error: ${error?.message || error}`);
