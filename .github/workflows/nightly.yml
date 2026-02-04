@@ -1,0 +1,67 @@
+name: nightly
+
+on:
+  schedule:
+    - cron: "0 3 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: nightly
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ${{ matrix.os }}
+    env:
+      CSC_IDENTITY_AUTO_DISCOVERY: "false"
+      NODE_OPTIONS: "--max-old-space-size=4096"
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            package_cmd: package:win
+          - os: macos-latest
+            package_cmd: package:mac
+          - os: ubuntu-latest
+            package_cmd: package:linux
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+
+      - name: Install root deps
+        run: npm ci
+
+      - name: Install angular deps
+        run: npm ci
+        working-directory: angular
+
+      - name: Build and package (Windows)
+        run: npm run ${{ matrix.package_cmd }}
+
+      - name: Upload nightly prerelease
+        uses: ncipollo/release-action@v1
+        with:
+          tag: nightly
+          name: Nightly
+          prerelease: true
+          allowUpdates: true
+          replacesArtifacts: true
+          artifacts: |
+            build/*.exe
+            build/*.zip
+            build/*.dmg
+            build/*.AppImage
+            build/*.deb
+            build/*.yml
+            build/*.blockmap
+            build/*.msi
